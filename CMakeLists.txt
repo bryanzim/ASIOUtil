@@ -6,8 +6,8 @@ find_package(dechamps_cpputil CONFIG REQUIRED)
 include(FetchContent)
 set(FETCHCONTENT_QUIET FALSE)
 FetchContent_Declare(asiosdk
-	URL "https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip"
-	URL_HASH SHA1=33c44f0c919a7218413ea81e06a66bb8b47be292
+	URL "https://download.steinberg.net/sdk_downloads/ASIO-SDK_2.3.4_2025-10-15.zip"
+	URL_HASH SHA1=11d5082e8d3732cadae0184c6a4dad0cbf2e455d
 	USES_TERMINAL_DOWNLOAD TRUE  # https://gitlab.kitware.com/cmake/cmake/issues/18238#note_440475
 )
 FetchContent_GetProperties(asiosdk)
