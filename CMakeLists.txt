@@ -63,7 +63,12 @@ target_include_directories(asio
 	PUBLIC "$<BUILD_INTERFACE:${asiosdk_SOURCE_DIR}>"
 	PUBLIC "$<INSTALL_INTERFACE:include>"
 )
-target_compile_options(asio PRIVATE /WX /W4 /permissive- /analyze)
+# clang-cl does not implement MSVC /analyze.
+set(_asio_warning_options /WX /W4 /permissive-)
+if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC"))
+	list(APPEND _asio_warning_options /analyze)
+endif()
+target_compile_options(asio PRIVATE ${_asio_warning_options})
 
 install(FILES "${asiosdk_SOURCE_DIR}/host/ginclude.h" "${asiosdk_SOURCE_DIR}/common/asio.h" "${asiosdk_SOURCE_DIR}/common/asiosys.h" "${asiosdk_SOURCE_DIR}/common/iasiodrv.h" DESTINATION include/dechamps_ASIOUtil/asiosdk)
 install(TARGETS asiosdk_ginclude asiosdk_asioh asiosdk_asiosys asiosdk_iasiodrv asiosdk_asiolist asiosdk_asiodrivers asiosdk_asio EXPORT dechamps_ASIOUtil-config ARCHIVE DESTINATION lib/dechamps_ASIOUtil)
