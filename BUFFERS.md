@@ -264,7 +264,10 @@ to the one that was passed to the `bufferSwitch` call that just happened. This
 could mislead the driver into thinking that the application has stopped using
 the new output buffer, resulting in race conditions. For this reason it might
 be safer to make the driver block until the application has called
-`ASIOOutputReady()` before making the next call to `bufferSwitch`.
+`ASIOOutputReady()` before making the next call to `bufferSwitch`. If the driver
+does block, it is important to make sure it unblocks on a call to `ASIOStop()`
+as some applications do not call `ASIOOutputReady()` for the last `bufferSwitch`
+while stopping ([example][flexasio235]).
 
 ## `ASIOStart()` and "priming"
 
@@ -309,6 +312,37 @@ steady-state, with one additional buffer in the output queue at all times. This
 seems to be the scenario described in the example in section 6 of the ASIO SDK
 documentation.
 
+### Special case: input-only mode
+
+There is additional ambiguity in the half-duplex pure recording mode where no
+output channels are used (i.e. all buffers passed to `ASIOCreateBuffers()` are
+input buffers). In that case, there are two possible approaches:
+
+1. The driver should call `bufferSwitch(0)` immediately on `ASIOStart()` with
+   silence to be consistent with full-duplex operation; or
+2. The driver should start recording into buffer 0 on `ASIOStart()` and wait for
+   buffer 0 to be filled with real samples before making the first call to
+   `bufferSwitch(0)`.
+
+It seems unlikely that an host application would badly misbehave if the
+application disagrees with the driver on this; indeed, the sequence of calls
+doesn't change - only the timing does, and calls can be arbitrarily delayed
+regardless.
+
+If a driver implements (1) but the application expects (2), the application will
+incorrectly report an initial period of silence in the recording.
+
+If a driver implements (2) but the application expects (1), the application will
+incorrectly drop the beginning of the recording. However, this risk is always
+present regardless: indeed, ASIO drivers do not make any guarantees as to when
+streaming will actually start after `ASIOStart()` is called, so it is impossible
+for applications to precisely time the start of recording anyway.
+
+Given the above, it would seem to make sense for drivers to implement approach
+(2), i.e. start recording on `ASIOStart()` and only make the first
+`bufferSwitch(0)` call once the first buffer has been filled with recorded
+samples.
+
 ## Summary of recommendations
 
 In the presence of such ambiguity around buffer validity, the best option for
@@ -321,15 +355,16 @@ application developers and driver developers is to apply the
   - If `ASIOOutputReady()` is called, the driver can assume the application is
     not using the output buffer anymore, but be careful about such calls racing
     against `bufferSwitch`. You might want to wait for `ASIOOutputReady()` to be
-    called before making the next `bufferSwitch` call.
+    called before making the next `bufferSwitch` call. If you do, make sure to
+    unblock on a call to `ASIOStop()`.
 - Paranoid host application developers should assume that buffer 0 will cease to
   be valid as soon as they return from `bufferSwitch(0)` (same for the other
   buffer).
   - In any case, applications should *always* call `ASIOOutputReady()` when
     they have stopped using an output buffer.
 
-An example sequence of calls could look as follows. If the application does not
-support `ASIOOutputReady()`:
+An example sequence of calls could look as follows. If output channels are used
+and the application does not support `ASIOOutputReady()`:
 
 1. Application fills output buffer 1.
    - One could argue the application could wait right up until step 6 before
@@ -354,7 +389,7 @@ support `ASIOOutputReady()`:
 19. Driver sends output buffer 0 to the hardware.
 20. Steady-state: go to step 12.
 
-If the application supports `ASIOOutputReady()`:
+If output channels are used and the application supports `ASIOOutputReady()`:
 
 1. Application advertises support for `ASIOOutputReady()` by calling it.
 2. Application fills output buffer 1.
@@ -366,18 +401,35 @@ If the application supports `ASIOOutputReady()`:
      the driver does that, for better consistency with steady-state operation.
      However, the application might disagree, leading the driver to wait
      forever.
-7. Driver starts hardware playback and recording.
-8. Driver calls `bufferSwitch(0)`.
-9. Application returns from `bufferSwitch(0)`.
+7. Driver calls `bufferSwitch(0)`.
+8. Application returns from `bufferSwitch(0)`.
    - Before or after this step, the application calls `ASIOOutputReady()`. Upon
      receiving this call the driver sends output buffer 0 to the hardware.
+9. Driver starts hardware playback and recording.
 10. Driver waits for incoming data to arrive, stores it in buffer 1.
 11. Driver calls `bufferSwitch(1)`.
 12. Application returns from `bufferSwitch(1)`.
     - Before or after this step, the application calls `ASIOOutputReady()`. Upon
       receiving this call the driver sends output buffer 1 to the hardware.
 13. Driver waits for incoming data to arrive, stores it in buffer 0.
-14. Steady-state: go to step 9.
+14. Driver calls `bufferSwitch(0)`.
+15. Application returns from `bufferSwitch(0)`.
+    - Before or after this step, the application calls `ASIOOutputReady()`. Upon
+      receiving this call the driver sends output buffer 0 to the hardware.
+16. Driver waits for incoming data to arrive, stores it in buffer 1.
+17. Steady-state: go to step 11.
+
+If only input channels are used (half-duplex pure recording mode):
+
+1. Application calls `ASIOStart()`.
+2. Driver starts hardware recording.
+3. Driver waits for incoming data to arrive, stores it in buffer 0.
+4. Driver calls `bufferSwitch(0)`.
+5. Application returns from `bufferSwitch(0)`.
+6. Driver waits for incoming data to arrive, stores it in buffer 1.
+7. Driver calls `bufferSwitch(1)`.
+8. Application returns from `bufferSwitch(1)`.
+9. Steady-state: go to step 3.
 
 ---
 
@@ -388,3 +440,4 @@ If the application supports `ASIOOutputReady()`:
 [Robustness principle]: https://en.wikipedia.org/wiki/Robustness_principle
 [undefined behaviour]: https://en.wikipedia.org/wiki/Undefined_behavior
 [benignrace]: https://software.intel.com/en-us/blogs/2013/01/06/benign-data-races-what-could-possibly-go-wrong
+[flexasio235]: https://github.com/dechamps/FlexASIO/issues/235
